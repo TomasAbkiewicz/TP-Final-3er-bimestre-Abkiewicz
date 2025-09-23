@@ -1,8 +1,6 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
-using UnityEngine.SceneManagement;
-using UnityEngine.UI;
 
 public class AgentScript : MonoBehaviour
 {
@@ -19,28 +17,24 @@ public class AgentScript : MonoBehaviour
     [SerializeField] private Animator anim;
 
     [Header("Detección del jugador")]
-    [SerializeField] private Transform player;
+    [SerializeField] private Transform player;            // Asignar en inspector (o queda null y se busca por tag)
     [SerializeField] private float detectionRange = 10f;
     [SerializeField, Range(0f, 180f)] private float detectionAngle = 45f;
-    [SerializeField] private LayerMask detectionMask = ~0;
-    [SerializeField] private float eyeHeight = 1.6f;
-
-    [Header("Derrota del jugador")]
-    [SerializeField] private string loseSceneName = "GameOver"; // Nombre de la escena de derrota
-    [SerializeField] private Text loseMessageUI;                // Texto UI en canvas
-    [SerializeField] private string loseMessage = "¡Has sido atrapado!";
-    [SerializeField] private float loseDelay = 2f;              // Tiempo antes de cambiar de escena
+    [SerializeField] private LayerMask detectionMask = ~0; // por defecto: todas las capas (para evitar que no golpee nada)
+    [SerializeField] private float eyeHeight = 1.6f;       // altura desde donde sale el raycast
 
     private void Awake()
     {
         agent = GetComponent<NavMeshAgent>();
         if (agent == null) Debug.LogError($"{name} no tiene NavMeshAgent!");
 
+        // Asegurar que el agente rote el transform (útil para usar transform.forward como referencia)
         agent.updateRotation = true;
     }
 
     private void Start()
     {
+        // si no asignaste player en inspector, intenta buscar por tag "Player"
         if (player == null)
         {
             GameObject p = GameObject.FindGameObjectWithTag("Player");
@@ -62,13 +56,15 @@ public class AgentScript : MonoBehaviour
 
     private void Update()
     {
+        // Detectamos siempre (si no está en modo persecución)
         if (!isChasing)
         {
-            DetectPlayer();
+            DetectPlayer();   // <- hacemos la detección primero para que funcione aunque el agente esté detenido por haber terminado patrulla
             Patrol();
         }
         else
         {
+            // Persecución: seguir al jugador
             if (player != null)
             {
                 agent.isStopped = false;
@@ -76,6 +72,7 @@ public class AgentScript : MonoBehaviour
             }
         }
 
+        // Animación
         if (anim != null)
             anim.SetFloat("Speed", agent.velocity.magnitude);
     }
@@ -91,8 +88,10 @@ public class AgentScript : MonoBehaviour
 
             if (currentTargetIndex >= targets.Count)
             {
+                // Opción 2: detener al llegar al último punto
                 finishedPatrol = true;
                 agent.isStopped = true;
+                Debug.Log($"{name} terminó patrulla.");
                 return;
             }
 
@@ -108,53 +107,42 @@ public class AgentScript : MonoBehaviour
         Vector3 toPlayer = player.position - origin;
         float distanceToPlayer = toPlayer.magnitude;
 
-        Debug.DrawRay(origin, toPlayer.normalized * Mathf.Min(distanceToPlayer, detectionRange), Color.red);
+        // Debug visual
+        Debug.DrawRay(origin, (toPlayer.normalized) * Mathf.Min(distanceToPlayer, detectionRange), Color.red);
 
+        // Rango
         if (distanceToPlayer > detectionRange) return;
 
+        // Ángulo
         float angle = Vector3.Angle(transform.forward, toPlayer.normalized);
         if (angle > detectionAngle) return;
 
+        // Raycast (usamos detectionMask para que detecte tanto player como obstáculos si configuras las capas)
         if (Physics.Raycast(origin, toPlayer.normalized, out RaycastHit hit, detectionRange, detectionMask))
         {
+            // Aceptamos tanto hit al objeto player (por tag) como si el hit.transform es exactamente el transform que asignaste
             if (hit.transform == player || hit.collider.CompareTag("Player"))
             {
+                Debug.Log($"{name} DETECTÓ al Player (hit: {hit.collider.name}). Pasando a perseguir.");
                 isChasing = true;
                 finishedPatrol = true;
                 agent.isStopped = false;
                 agent.SetDestination(player.position);
             }
+            else
+            {
+                // si le pegó a otra cosa, hay un obstáculo en la línea de visión
+                Debug.Log($"{name} raycast bloqueado por: {hit.collider.name}");
+            }
         }
-    }
-
-    private void OnTriggerEnter(Collider other)
-    {
-        if (other.CompareTag("Player"))
+        else
         {
-            PlayerLose();
+            // no golpeó nada (posible problema con detectionMask)
+            Debug.Log($"{name} Raycast no golpeó nada. Revisa detectionMask.");
         }
     }
 
-    private void PlayerLose()
-    {
-        Debug.Log("Jugador atrapado -> GAME OVER");
-
-        // Mostrar mensaje en UI si está asignado
-        if (loseMessageUI != null)
-        {
-            loseMessageUI.gameObject.SetActive(true);
-            loseMessageUI.text = loseMessage;
-        }
-
-        // Cambiar de escena después del delay
-        Invoke(nameof(LoadLoseScene), loseDelay);
-    }
-
-    private void LoadLoseScene()
-    {
-        SceneManager.LoadScene(loseSceneName);
-    }
-
+    // Visual ayuda en el editor: radio y líneas del campo de visión
     private void OnDrawGizmosSelected()
     {
         Vector3 origin = transform.position + Vector3.up * eyeHeight;
