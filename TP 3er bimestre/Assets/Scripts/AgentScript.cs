@@ -1,12 +1,14 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 public class AgentScript : MonoBehaviour
 {
     private NavMeshAgent agent;
 
-    [Header("Patrullaje")]
+
     [SerializeField] private List<Transform> targets = new List<Transform>();
     private int currentTargetIndex = 0;
     [SerializeField] private float reachThreshold = 0.5f;
@@ -17,24 +19,28 @@ public class AgentScript : MonoBehaviour
     [SerializeField] private Animator anim;
 
     [Header("Detección del jugador")]
-    [SerializeField] private Transform player;            // Asignar en inspector (o queda null y se busca por tag)
+    [SerializeField] private Transform player;
     [SerializeField] private float detectionRange = 10f;
     [SerializeField, Range(0f, 180f)] private float detectionAngle = 45f;
-    [SerializeField] private LayerMask detectionMask = ~0; // por defecto: todas las capas (para evitar que no golpee nada)
-    [SerializeField] private float eyeHeight = 1.6f;       // altura desde donde sale el raycast
+    [SerializeField] private LayerMask detectionMask = ~0;
+    [SerializeField] private float eyeHeight = 1.6f;
+
+
+    [SerializeField] private Text messageUI;
+
+    // --- NUEVO: control de persecución ---
+    private float chaseTimer = 0f;
+    [SerializeField] private float maxChaseTime = 2f;
 
     private void Awake()
     {
         agent = GetComponent<NavMeshAgent>();
         if (agent == null) Debug.LogError($"{name} no tiene NavMeshAgent!");
-
-        // Asegurar que el agente rote el transform (útil para usar transform.forward como referencia)
         agent.updateRotation = true;
     }
 
     private void Start()
     {
-        // si no asignaste player en inspector, intenta buscar por tag "Player"
         if (player == null)
         {
             GameObject p = GameObject.FindGameObjectWithTag("Player");
@@ -52,27 +58,33 @@ public class AgentScript : MonoBehaviour
             finishedPatrol = true;
             agent.isStopped = true;
         }
+
+        if (messageUI != null) messageUI.gameObject.SetActive(false);
     }
 
     private void Update()
     {
-        // Detectamos siempre (si no está en modo persecución)
         if (!isChasing)
         {
-            DetectPlayer();   // <- hacemos la detección primero para que funcione aunque el agente esté detenido por haber terminado patrulla
+            DetectPlayer();
             Patrol();
         }
         else
         {
-            // Persecución: seguir al jugador
             if (player != null)
             {
                 agent.isStopped = false;
                 agent.SetDestination(player.position);
+
+                chaseTimer += Time.deltaTime;
+                if (chaseTimer >= maxChaseTime)
+                {
+                    Debug.Log($"{name} no atrapó al Player en {maxChaseTime} seg → vuelve a patrullar.");
+                    RestartPatrol();
+                }
             }
         }
 
-        // Animación
         if (anim != null)
             anim.SetFloat("Speed", agent.velocity.magnitude);
     }
@@ -85,16 +97,13 @@ public class AgentScript : MonoBehaviour
         if (!agent.pathPending && agent.remainingDistance <= reachThreshold)
         {
             currentTargetIndex++;
-
             if (currentTargetIndex >= targets.Count)
             {
-                // Opción 2: detener al llegar al último punto
                 finishedPatrol = true;
                 agent.isStopped = true;
                 Debug.Log($"{name} terminó patrulla.");
                 return;
             }
-
             agent.SetDestination(targets[currentTargetIndex].position);
         }
     }
@@ -107,20 +116,15 @@ public class AgentScript : MonoBehaviour
         Vector3 toPlayer = player.position - origin;
         float distanceToPlayer = toPlayer.magnitude;
 
-        // Debug visual
         Debug.DrawRay(origin, (toPlayer.normalized) * Mathf.Min(distanceToPlayer, detectionRange), Color.red);
 
-        // Rango
         if (distanceToPlayer > detectionRange) return;
 
-        // Ángulo
         float angle = Vector3.Angle(transform.forward, toPlayer.normalized);
         if (angle > detectionAngle) return;
 
-        // Raycast (usamos detectionMask para que detecte tanto player como obstáculos si configuras las capas)
         if (Physics.Raycast(origin, toPlayer.normalized, out RaycastHit hit, detectionRange, detectionMask))
         {
-            // Aceptamos tanto hit al objeto player (por tag) como si el hit.transform es exactamente el transform que asignaste
             if (hit.transform == player || hit.collider.CompareTag("Player"))
             {
                 Debug.Log($"{name} DETECTÓ al Player (hit: {hit.collider.name}). Pasando a perseguir.");
@@ -128,21 +132,48 @@ public class AgentScript : MonoBehaviour
                 finishedPatrol = true;
                 agent.isStopped = false;
                 agent.SetDestination(player.position);
+
+                chaseTimer = 0f;
             }
-            else
-            {
-                // si le pegó a otra cosa, hay un obstáculo en la línea de visión
-                Debug.Log($"{name} raycast bloqueado por: {hit.collider.name}");
-            }
-        }
-        else
-        {
-            // no golpeó nada (posible problema con detectionMask)
-            Debug.Log($"{name} Raycast no golpeó nada. Revisa detectionMask.");
         }
     }
 
-    // Visual ayuda en el editor: radio y líneas del campo de visión
+    private void OnCollisionEnter(Collision collision)
+    {
+        if (collision.gameObject.CompareTag("Player"))
+        {
+            Debug.Log($"{name} atrapó al jugador!");
+
+            if (messageUI != null)
+            {
+                messageUI.text = "¡Has sido atrapado!";
+                messageUI.gameObject.SetActive(true);
+            }
+
+            agent.isStopped = true;
+            Invoke(nameof(GoToGameOver), 2f);
+        }
+    }
+
+    private void GoToGameOver()
+    {
+        SceneManager.LoadScene(1);
+    }
+
+    private void RestartPatrol()
+    {
+        isChasing = false;
+        finishedPatrol = false;
+        chaseTimer = 0f;
+
+        if (targets.Count == 0) return;
+
+        // waypoint aleatorio
+        currentTargetIndex = Random.Range(0, targets.Count);
+        agent.isStopped = false;
+        agent.SetDestination(targets[currentTargetIndex].position);
+    }
+
     private void OnDrawGizmosSelected()
     {
         Vector3 origin = transform.position + Vector3.up * eyeHeight;
