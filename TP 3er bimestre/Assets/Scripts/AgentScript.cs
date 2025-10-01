@@ -35,7 +35,6 @@ public class AgentScript : MonoBehaviour
     private void Awake()
     {
         agent = GetComponent<NavMeshAgent>();
-        if (agent == null) Debug.LogError($"{name} no tiene NavMeshAgent!");
         agent.updateRotation = true;
     }
 
@@ -101,7 +100,6 @@ public class AgentScript : MonoBehaviour
             {
                 finishedPatrol = true;
                 agent.isStopped = true;
-                Debug.Log($"{name} terminó patrulla.");
                 return;
             }
             agent.SetDestination(targets[currentTargetIndex].position);
@@ -127,7 +125,7 @@ public class AgentScript : MonoBehaviour
         {
             if (hit.transform == player || hit.collider.CompareTag("Player"))
             {
-                Debug.Log($"{name} DETECTÓ al Player (hit: {hit.collider.name}). Pasando a perseguir.");
+               
                 isChasing = true;
                 finishedPatrol = true;
                 agent.isStopped = false;
